@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Wear Log</title>
+<style>
+  :root{
+    --bg:#f6f6f7; --card:#fff; --ink:#16181d; --muted:#6b7280;
+    --line:#e4e6ea; --accent:#111827; --accent-ink:#fff;
+    --chip:#fff; --chip-line:#d5d8de; --sel:#111827; --sel-ink:#fff;
+    --ok:#137a4b; --err:#b42318;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#0e0f12; --card:#17191f; --ink:#f2f3f5; --muted:#9aa1ac;
+      --line:#262a32; --accent:#f2f3f5; --accent-ink:#111;
+      --chip:#1d2027; --chip-line:#333842; --sel:#f2f3f5; --sel-ink:#111;
+      --ok:#5fd39a; --err:#ff8b7d;
+    }
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--ink);
+    padding:max(12px,env(safe-area-inset-top)) 12px max(24px,env(safe-area-inset-bottom));
+    max-width:760px; margin:0 auto;
+    -webkit-text-size-adjust:100%;
+  }
+  h1{font-size:20px; margin:4px 0 2px; letter-spacing:-.01em}
+  .sub{color:var(--muted); font-size:13px; margin-bottom:14px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px}
+  label{display:block; font-size:12px; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:0 0 6px}
+  input[type=text],input[type=date],input[type=password]{
+    width:100%; padding:11px 12px; font-size:16px; border:1px solid var(--chip-line);
+    border-radius:10px; background:var(--chip); color:var(--ink);
+  }
+  .row{display:flex; gap:10px}
+  .row>*{flex:1}
+  .cat{margin:16px 0 6px; font-size:13px; font-weight:600; color:var(--muted); display:flex; justify-content:space-between}
+  .chips{display:flex; flex-wrap:wrap; gap:8px}
+  .chip{
+    border:1px solid var(--chip-line); background:var(--chip); color:var(--ink);
+    padding:9px 12px; border-radius:999px; font-size:14px; cursor:pointer; user-select:none;
+    min-height:40px; display:inline-flex; align-items:center; gap:6px; line-height:1.1;
+    transition:transform .04s ease;
+  }
+  .chip:active{transform:scale(.96)}
+  .chip.sel{background:var(--sel); color:var(--sel-ink); border-color:var(--sel)}
+  .chip .id{font-size:11px; opacity:.55}
+  .chip.sel .id{opacity:.8}
+  .ctxwrap{display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px}
+  .ctx{padding:8px 12px; border-radius:999px; border:1px solid var(--chip-line); background:var(--chip); font-size:14px; cursor:pointer; min-height:38px}
+  .ctx.sel{background:var(--sel); color:var(--sel-ink); border-color:var(--sel)}
+  .bar{
+    position:sticky; bottom:0; margin-top:14px; padding:12px 0 max(6px,env(safe-area-inset-bottom));
+    background:linear-gradient(to top,var(--bg) 72%,transparent); display:flex; gap:10px; align-items:center;
+  }
+  button.primary{
+    flex:1; padding:15px; font-size:16px; font-weight:600; border:none; border-radius:12px;
+    background:var(--accent); color:var(--accent-ink); cursor:pointer;
+  }
+  button.primary:disabled{opacity:.4; cursor:default}
+  button.ghost{
+    padding:15px; font-size:15px; border:1px solid var(--chip-line); border-radius:12px;
+    background:var(--chip); color:var(--ink); cursor:pointer; white-space:nowrap;
+  }
+  .count{font-size:13px; color:var(--muted); min-width:70px}
+  .msg{font-size:14px; margin-top:10px; min-height:20px}
+  .msg.ok{color:var(--ok)} .msg.err{color:var(--err)}
+  details{margin-top:6px} summary{cursor:pointer; color:var(--muted); font-size:13px}
+  .help{font-size:13px; color:var(--muted); line-height:1.5}
+  .help code{background:var(--chip); padding:1px 5px; border-radius:5px; font-size:12px}
+  .help a{color:inherit}
+  .recent{font-size:13px; color:var(--muted)}
+  .recent .r{padding:8px 0; border-top:1px solid var(--line)}
+  .recent .r:first-child{border-top:none}
+  .recent b{color:var(--ink); font-weight:600}
+  .hidden{display:none !important}
+  .spin{display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+  <h1>Wear Log</h1>
+  <div class="sub">Tap what you wore &rarr; pick a context &rarr; log it. Commits straight to <code style="font-size:12px">wear-log.csv</code>.</div>
+
+  <!-- Setup / token -->
+  <div class="card" id="setupCard">
+    <label for="token">GitHub token</label>
+    <input type="password" id="token" placeholder="github_pat_..." autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div style="display:flex; gap:10px; margin-top:10px">
+      <button class="ghost" style="flex:1; padding:11px" id="saveToken">Save &amp; load</button>
+      <button class="ghost" style="padding:11px" id="clearToken">Forget</button>
+    </div>
+    <details>
+      <summary>How to make a token (once)</summary>
+      <div class="help" style="margin-top:8px">
+        1. Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained tokens &rarr; Generate new</a>.<br>
+        2. <b>Resource owner:</b> your account. <b>Repository access:</b> Only select repositories &rarr; <code>personal_wardrobe</code>.<br>
+        3. <b>Permissions &rarr; Repository &rarr; Contents:</b> Read and write. Nothing else.<br>
+        4. Generate, copy the <code>github_pat_...</code> string, paste it above. It's stored only on this device and can be revoked anytime.
+      </div>
+    </details>
+  </div>
+
+  <div id="app" class="hidden">
+    <!-- Date + context -->
+    <div class="card">
+      <div class="row" style="margin-bottom:12px">
+        <div style="flex:0 0 46%">
+          <label for="date">Date</label>
+          <input type="date" id="date">
+        </div>
+        <div>
+          <label for="ctxInput">Context</label>
+          <input type="text" id="ctxInput" placeholder="e.g. casual, elevated-casual, dressed-up" autocapitalize="none">
+        </div>
+      </div>
+      <div class="ctxwrap" id="ctxPresets"></div>
+    </div>
+
+    <!-- Items -->
+    <div class="card" id="itemsCard">
+      <div id="items"><div class="sub">Loading wardrobe&hellip;</div></div>
+    </div>
+
+    <!-- Recent -->
+    <div class="card">
+      <label>Recent</label>
+      <div class="recent" id="recent">&mdash;</div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+
+    <div class="bar">
+      <span class="count" id="count">0 items</span>
+      <button class="ghost" id="copyBtn" title="Copy the lines instead of committing">Copy</button>
+      <button class="primary" id="logBtn" disabled>Log &amp; commit</button>
+    </div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+  var OWNER="JerrySu11", REPO="personal_wardrobe", BRANCH="main";
+  var INV_PATH="wardrobe-tracker/inventory.csv";
+  var LOG_PATH="wardrobe-tracker/wear-log.csv";
+  var API="https://api.github.com/repos/"+OWNER+"/"+REPO+"/contents/";
+  var TK="wardrobe_gh_token";
+  var CAT_ORDER=["outerwear","top","pants","footwear","accessory"];
+  var CAT_LABEL={outerwear:"Outerwear",top:"Tops",pants:"Pants",footwear:"Footwear",accessory:"Accessories"};
+  var DEFAULT_CTX=["casual","elevated-casual","dressed-up"];
+
+  var $=function(id){return document.getElementById(id);};
+  var items=[], nameById={}, selected=new Set(), ctx="";
+
+  // ---- base64 (utf-8 safe) ----
+  function b64enc(s){return btoa(encodeURIComponent(s).replace(/%([0-9A-F]{2})/g,function(_,p){return String.fromCharCode(parseInt(p,16));}));}
+  function b64dec(b){return decodeURIComponent(Array.prototype.map.call(atob(b.replace(/\s/g,"")),function(c){return "%"+("00"+c.charCodeAt(0).toString(16)).slice(-2);}).join(""));}
+
+  function token(){return localStorage.getItem(TK)||"";}
+  function headers(){return {Authorization:"Bearer "+token(),Accept:"application/vnd.github+json","X-GitHub-Api-Version":"2022-11-28"};}
+
+  function ghGet(path){
+    return fetch(API+path+"?ref="+BRANCH,{headers:headers(),cache:"no-store"}).then(function(r){
+      if(r.status===404) return {sha:null,text:""};
+      if(!r.ok) return r.text().then(function(t){throw new Error("GET "+r.status+": "+t.slice(0,120));});
+      return r.json().then(function(j){return {sha:j.sha,text:j.content?b64dec(j.content):""};});
+    });
+  }
+  function ghPut(path,text,sha,message){
+    var body={message:message,content:b64enc(text),branch:BRANCH};
+    if(sha) body.sha=sha;
+    return fetch(API+path,{method:"PUT",headers:headers(),body:JSON.stringify(body)}).then(function(r){
+      if(r.status===409) return "conflict";
+      if(!r.ok) return r.text().then(function(t){throw new Error("PUT "+r.status+": "+t.slice(0,140));});
+      return "ok";
+    });
+  }
+
+  function msg(text,cls){var m=$("msg"); m.textContent=text; m.className="msg"+(cls?" "+cls:"");}
+
+  // ---- inventory ----
+  function parseInventory(text){
+    var lines=text.split(/\r?\n/).filter(function(l){return l.trim();});
+    lines.shift(); // header
+    var out=[];
+    lines.forEach(function(l){
+      var p=l.split("|");
+      if(p.length<7) return;
+      var it={id:p[0],name:p[1],cat:p[2],arch:p[3],status:p[6]};
+      nameById[it.id]=it.name;
+      if(it.status==="owned") out.push(it);
+    });
+    return out;
+  }
+
+  function shortName(it){
+    // strip trailing "(...)" notes and "(x-multiple)" for a cleaner chip
+    return it.name.replace(/\s*\([^)]*\)\s*$/,"").trim();
+  }
+
+  function renderItems(){
+    var host=$("items"); host.innerHTML="";
+    CAT_ORDER.forEach(function(cat){
+      var group=items.filter(function(i){return i.cat===cat;});
+      if(!group.length) return;
+      var head=document.createElement("div"); head.className="cat";
+      head.innerHTML="<span>"+(CAT_LABEL[cat]||cat)+"</span>";
+      host.appendChild(head);
+      var wrap=document.createElement("div"); wrap.className="chips";
+      group.forEach(function(it){
+        var c=document.createElement("div"); c.className="chip"+(selected.has(it.id)?" sel":"");
+        c.innerHTML=escapeHtml(shortName(it))+" <span class='id'>"+it.id+"</span>";
+        c.onclick=function(){
+          if(selected.has(it.id)) selected.delete(it.id); else selected.add(it.id);
+          c.classList.toggle("sel"); updateCount();
+        };
+        wrap.appendChild(c);
+      });
+      host.appendChild(wrap);
+    });
+  }
+
+  function renderCtxPresets(extra){
+    var set=DEFAULT_CTX.slice();
+    (extra||[]).forEach(function(c){if(set.indexOf(c)<0) set.push(c);});
+    var host=$("ctxPresets"); host.innerHTML="";
+    set.forEach(function(c){
+      var el=document.createElement("div"); el.className="ctx"+(c===ctx?" sel":"");
+      el.textContent=c;
+      el.onclick=function(){ctx=c; $("ctxInput").value=c; syncCtxSel(); updateCount();};
+      host.appendChild(el);
+    });
+  }
+  function syncCtxSel(){
+    var els=$("ctxPresets").children;
+    for(var i=0;i<els.length;i++) els[i].classList.toggle("sel",els[i].textContent===ctx);
+  }
+
+  function updateCount(){
+    var n=selected.size;
+    $("count").textContent=n+" item"+(n===1?"":"s");
+    var ready=n>0 && !!$("ctxInput").value.trim() && !!$("date").value;
+    $("logBtn").disabled=!ready;
+    $("copyBtn").disabled=n===0;
+  }
+
+  function linesFor(){
+    var date=$("date").value, c=$("ctxInput").value.trim();
+    var ids=[]; items.forEach(function(i){if(selected.has(i.id)) ids.push(i.id);});
+    return ids.map(function(id){return date+"|"+id+"|"+c;});
+  }
+
+  function renderRecent(logText){
+    var lines=logText.split(/\r?\n/).filter(function(l){return l.trim()&&l.indexOf("|")>0;});
+    lines.shift(); // header
+    var map={}, order=[];
+    lines.forEach(function(l){
+      var p=l.split("|"); var key=p[0]+"|"+(p[2]||"");
+      if(!map[key]){map[key]=[]; order.push(key);}
+      map[key].push(p[1]);
+    });
+    order.reverse();
+    var host=$("recent"); host.innerHTML="";
+    if(!order.length){host.textContent="No wears logged yet."; return;}
+    order.slice(0,6).forEach(function(key){
+      var parts=key.split("|"), date=parts[0], c=parts[1];
+      var names=map[key].map(function(id){return nameById[id]?shortName({name:nameById[id]}):id;});
+      var r=document.createElement("div"); r.className="r";
+      r.innerHTML="<b>"+escapeHtml(date)+"</b> &middot; "+escapeHtml(c||"—")+"<br>"+escapeHtml(names.join(", "));
+      host.appendChild(r);
+    });
+  }
+
+  function escapeHtml(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
+
+  // ---- submit ----
+  function submit(){
+    var newLines=linesFor();
+    if(!newLines.length) return;
+    var btn=$("logBtn"); btn.disabled=true;
+    msg("Committing… ","");
+    $("msg").innerHTML='<span class="spin"></span> Committing…';
+    var extraCtx=$("ctxInput").value.trim();
+
+    function attempt(tries){
+      return ghGet(LOG_PATH).then(function(cur){
+        var base=cur.text;
+        if(!base) base="date|item_id|context\n";
+        if(base.slice(-1)!=="\n") base+="\n";
+        var next=base+newLines.join("\n")+"\n";
+        var date=$("date").value;
+        var m="log: "+date+" "+extraCtx+" ("+newLines.length+" item"+(newLines.length===1?"":"s")+")";
+        return ghPut(LOG_PATH,next,cur.sha,m).then(function(res){
+          if(res==="conflict"){
+            if(tries<=0) throw new Error("conflict (retry failed)");
+            return attempt(tries-1);
+          }
+          renderRecent(next);
+        });
+      });
+    }
+
+    attempt(2).then(function(){
+      msg("Logged "+newLines.length+" item(s) for "+$("date").value+" · "+extraCtx+".","ok");
+      selected.clear(); renderItems(); updateCount();
+    }).catch(function(e){
+      msg("Failed: "+e.message,"err"); btn.disabled=false;
+    });
+  }
+
+  function copyLines(){
+    var text=linesFor().join("\n");
+    if(!text) return;
+    navigator.clipboard.writeText(text).then(function(){msg("Copied "+linesFor().length+" line(s) to clipboard.","ok");},
+      function(){msg("Copy failed — select manually: "+text,"err");});
+  }
+
+  // ---- boot ----
+  function loadAll(){
+    $("app").classList.remove("hidden");
+    msg("");
+    $("items").innerHTML='<div class="sub"><span class="spin"></span> Loading wardrobe…</div>';
+    ghGet(INV_PATH).then(function(inv){
+      items=parseInventory(inv.text);
+      if(!items.length){msg("No owned items found in inventory.csv.","err"); return;}
+      renderItems();
+      return ghGet(LOG_PATH).then(function(log){
+        // seed context presets from history
+        var used=[]; log.text.split(/\r?\n/).forEach(function(l){var p=l.split("|"); if(p[2]&&used.indexOf(p[2])<0&&p[2]!=="context") used.push(p[2]);});
+        renderCtxPresets(used);
+        renderRecent(log.text);
+        updateCount();
+      });
+    }).catch(function(e){
+      msg("Couldn't load from GitHub: "+e.message+" — check the token.","err");
+      $("setupCard").scrollIntoView({behavior:"smooth"});
+    });
+  }
+
+  // wire up
+  $("date").value=new Date().toISOString().slice(0,10);
+  $("ctxInput").addEventListener("input",function(){ctx=this.value.trim(); syncCtxSel(); updateCount();});
+  $("logBtn").addEventListener("click",submit);
+  $("copyBtn").addEventListener("click",copyLines);
+  $("saveToken").addEventListener("click",function(){
+    var t=$("token").value.trim();
+    if(!t){msg("Paste a token first.","err"); return;}
+    localStorage.setItem(TK,t); $("token").value="";
+    loadAll();
+  });
+  $("clearToken").addEventListener("click",function(){
+    localStorage.removeItem(TK); $("app").classList.add("hidden"); msg("Token forgotten.","");
+  });
+
+  if(token()){ loadAll(); }
+})();
+</script>
+</body>
+</html>
