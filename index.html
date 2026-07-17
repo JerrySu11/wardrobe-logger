@@ -344,7 +344,7 @@
   }
 
   // wire up
-  $("date").value=new Date().toISOString().slice(0,10);
+  (function(){var d=new Date();var p=function(n){return(n<10?"0":"")+n;};$("date").value=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());})();
   $("ctxInput").addEventListener("input",function(){ctx=this.value.trim(); syncCtxSel(); updateCount();});
   $("logBtn").addEventListener("click",submit);
   $("copyBtn").addEventListener("click",copyLines);
