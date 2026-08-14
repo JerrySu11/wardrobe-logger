@@ -199,9 +199,12 @@
     return out;
   }
 
+  // Only drop trailing parentheticals that are bookkeeping notes — quantities
+  // "(x-multiple)"/"(x2)" or serials/dates "(1105.2025)". Descriptive ones like
+  // "(Black)" distinguish otherwise-identical items and must survive.
+  var NOTE_PAREN=/\s*\((?:x[-\s]?\w+|\d[\d.\s\-\/]*)\)\s*$/i;
   function shortName(it){
-    // strip trailing "(...)" notes and "(x-multiple)" for a cleaner chip
-    return it.name.replace(/\s*\([^)]*\)\s*$/,"").trim();
+    return it.name.replace(NOTE_PAREN,"").trim();
   }
 
   function renderItems(){
