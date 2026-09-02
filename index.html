@@ -79,6 +79,18 @@
   .recent .r{padding:8px 0; border-top:1px solid var(--line)}
   .recent .r:first-child{border-top:none}
   .recent b{color:var(--ink); font-weight:600}
+  .fit{border:1px solid var(--line); border-radius:12px; padding:12px; background:var(--chip)}
+  .fit .ttl{font-size:15px; font-weight:600; margin-bottom:8px; display:flex; gap:8px; align-items:baseline}
+  .fit .ttl .fid{font-size:11px; font-weight:400; color:var(--muted)}
+  .pieces{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px}
+  .piece{border:1px solid var(--chip-line); background:var(--card); border-radius:999px; padding:6px 11px; font-size:13px; line-height:1.15}
+  .piece .n{font-size:11px; color:var(--muted); margin-left:5px}
+  .piece.rare{border-color:var(--ok)}
+  .piece.rare .n{color:var(--ok)}
+  .piece.gone{border-style:dashed; border-color:var(--err); color:var(--err)}
+  .why{font-size:12px; color:var(--muted); line-height:1.55}
+  .why b{color:var(--ink); font-weight:600}
+  .why .bad{color:var(--err)}
   .hidden{display:none !important}
   .spin{display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -110,17 +122,24 @@
   <div id="app" class="hidden">
     <!-- Date + context -->
     <div class="card">
-      <div class="row" style="margin-bottom:12px">
-        <div style="flex:0 0 46%">
-          <label for="date">Date</label>
-          <input type="date" id="date">
-        </div>
-        <div>
-          <label for="ctxInput">Context</label>
-          <input type="text" id="ctxInput" placeholder="e.g. casual, elevated-casual, dressed-up" autocapitalize="none">
-        </div>
+      <div style="margin-bottom:12px">
+        <label for="date">Date</label>
+        <input type="date" id="date">
       </div>
+      <label>Context</label>
       <div class="ctxwrap" id="ctxPresets"></div>
+    </div>
+
+    <!-- Suggestion (advisory only — never logs anything by itself) -->
+    <div class="card" id="suggestCard">
+      <div class="cat" style="margin-top:0"><span>Outfit suggestion</span><span id="sugMeta"></span></div>
+      <div id="sugBody" class="sub" style="margin:0">Pick a context, then tap <b>Suggest</b> for an approved outfit from <code style="font-size:12px">outfits.csv</code>, weighted toward pieces you rarely wear. Advisory only — nothing is logged until you tap Log &amp; commit.</div>
+      <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
+        <button class="ghost" style="padding:10px 14px" id="sugBtn">Suggest</button>
+        <button class="ghost hidden" style="padding:10px 14px" id="sugShuffle">Shuffle</button>
+        <button class="ghost hidden" style="padding:10px 14px" id="sugUse">Use this</button>
+        <button class="ghost hidden" style="padding:10px 14px" id="sugClear">Dismiss</button>
+      </div>
     </div>
 
     <!-- Items -->
@@ -149,14 +168,27 @@
   var OWNER="JerrySu11", REPO="personal_wardrobe", BRANCH="main";
   var INV_PATH="wardrobe-tracker/inventory.csv";
   var LOG_PATH="wardrobe-tracker/wear-log.csv";
+  var OUTFITS_PATH="wardrobe-tracker/outfits.csv";
   var API="https://api.github.com/repos/"+OWNER+"/"+REPO+"/contents/";
   var TK="wardrobe_gh_token";
   var CAT_ORDER=["outerwear","top","pants","footwear","accessory"];
   var CAT_LABEL={outerwear:"Outerwear",top:"Tops",pants:"Pants",footwear:"Footwear",accessory:"Accessories"};
-  var DEFAULT_CTX=["casual","elevated-casual","dressed-up"];
+  // The controlled vocabulary. Context is a choice, not free text, so the strings
+  // in wear-log.csv stay consistent with the ones outfits.csv is tagged with.
+  // Adding a fourth context means adding it here and in outfits.html.
+  var CONTEXTS=["casual","elevated-casual","dressed-up"];
 
   var $=function(id){return document.getElementById(id);};
-  var items=[], nameById={}, selected=new Set(), ctx="";
+  var items=[], nameById={}, catById={}, ownedIds={}, selected=new Set(), ctx="";
+  // Suggestion state, deliberately separate from `selected` — a suggestion never
+  // touches the picker unless "Use this" is tapped, and never commits anything.
+  var outfits=[], outfitsErr="", wearCount={}, lastWorn={}, logDays=[], maxWear=0;
+  var PRIORITY=3;   // how hard suggestions lean toward under-worn pieces (1 = not at all)
+  var LOW_USE=2;    // a garment at or below this many wears is called out as under-worn
+  var sugQueue=[], sugPos=-1, sugCtx=null, sugCurrent=null;
+  var SUG_HINT='Pick a context, then tap <b>Suggest</b> for an approved outfit from '+
+    '<code style="font-size:12px">outfits.csv</code>, weighted toward pieces you rarely wear. '+
+    'Advisory only — nothing is logged until you tap Log &amp; commit.';
 
   // ---- base64 (utf-8 safe) ----
   function b64enc(s){return btoa(encodeURIComponent(s).replace(/%([0-9A-F]{2})/g,function(_,p){return String.fromCharCode(parseInt(p,16));}));}
@@ -193,8 +225,8 @@
       var p=l.split("|");
       if(p.length<7) return;
       var it={id:p[0],name:p[1],cat:p[2],arch:p[3],status:p[6]};
-      nameById[it.id]=it.name;
-      if(it.status==="owned") out.push(it);
+      nameById[it.id]=it.name; catById[it.id]=it.cat;
+      if(it.status==="owned"){ ownedIds[it.id]=1; out.push(it); }
     });
     return out;
   }
@@ -229,14 +261,13 @@
     });
   }
 
-  function renderCtxPresets(extra){
-    var set=DEFAULT_CTX.slice();
-    (extra||[]).forEach(function(c){if(set.indexOf(c)<0) set.push(c);});
+  function renderContexts(){
     var host=$("ctxPresets"); host.innerHTML="";
-    set.forEach(function(c){
+    CONTEXTS.forEach(function(c){
       var el=document.createElement("div"); el.className="ctx"+(c===ctx?" sel":"");
       el.textContent=c;
-      el.onclick=function(){ctx=c; $("ctxInput").value=c; syncCtxSel(); updateCount();};
+      // Tapping the selected one again clears it, so a mis-tap is undoable.
+      el.onclick=function(){ctx=(ctx===c?"":c); syncCtxSel(); updateCount();};
       host.appendChild(el);
     });
   }
@@ -248,13 +279,13 @@
   function updateCount(){
     var n=selected.size;
     $("count").textContent=n+" item"+(n===1?"":"s");
-    var ready=n>0 && !!$("ctxInput").value.trim() && !!$("date").value;
+    var ready=n>0 && !!ctx && !!$("date").value;
     $("logBtn").disabled=!ready;
     $("copyBtn").disabled=n===0;
   }
 
   function linesFor(){
-    var date=$("date").value, c=$("ctxInput").value.trim();
+    var date=$("date").value, c=ctx;
     var ids=[]; items.forEach(function(i){if(selected.has(i.id)) ids.push(i.id);});
     return ids.map(function(id){return date+"|"+id+"|"+c;});
   }
@@ -282,6 +313,192 @@
 
   function escapeHtml(s){return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];});}
 
+  // ---- approved outfits + suggestion engine ----
+  // outfit_id|name|context|items|note|active   ('#' comments and blank lines ignored)
+  function parseOutfits(text){
+    var out=[];
+    text.split(/\r?\n/).forEach(function(line){
+      var l=line.trim();
+      if(!l || l.charAt(0)==="#") return;
+      var p=l.split("|");
+      if(p.length<4 || p[0].trim()==="outfit_id") return;
+      var active=(p[5]||"yes").trim().toLowerCase();
+      if(active==="no"||active==="false"||active==="0") return;
+      var ids=p[3].split(",").map(function(x){return x.trim();}).filter(Boolean);
+      if(!ids.length) return;
+      out.push({
+        id:p[0].trim(),
+        name:(p[1]||"").trim()||p[0].trim(),
+        ctxs:(p[2]||"").split(",").map(function(x){return x.trim().toLowerCase();}).filter(Boolean),
+        items:ids,
+        note:(p[4]||"").trim()
+      });
+    });
+    return out;
+  }
+
+  // Wear frequency + recency, rebuilt from wear-log.csv on load and after a commit.
+  function computeWearStats(logText){
+    wearCount={}; lastWorn={}; logDays=[];
+    var byDate={}, order=[];
+    logText.split(/\r?\n/).forEach(function(l){
+      var p=l.split("|");
+      if(p.length<2) return;
+      var d=p[0].trim(), id=p[1].trim();
+      if(!id || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      wearCount[id]=(wearCount[id]||0)+1;
+      if(!lastWorn[id] || d>lastWorn[id]) lastWorn[id]=d;
+      if(!byDate[d]){ byDate[d]={}; order.push(d); }
+      byDate[d][id]=1;
+    });
+    logDays=order.map(function(d){return {date:d, ids:byDate[d]};});
+    maxWear=0;
+    for(var id in wearCount){
+      if(catById[id]==="accessory") continue;
+      if(wearCount[id]>maxWear) maxWear=wearCount[id];
+    }
+  }
+
+  function daysSince(d){
+    if(!d) return 9999;
+    var t=Date.parse(d+"T00:00:00");
+    if(isNaN(t)) return 9999;
+    return Math.max(0,Math.floor((Date.now()-t)/86400000));
+  }
+  // Accessories are near-constant (necklace, watch) and would flatten the score,
+  // so rotation is judged on the garments.
+  function core(o){
+    var c=o.items.filter(function(id){return catById[id]!=="accessory";});
+    return c.length?c:o.items;
+  }
+  // Rarity on a 0..1 scale: 0 = the garment you wear most / wore today,
+  // 1 = never worn. Scaling frequency against the most-worn garment (rather than
+  // 1/(1+n)) keeps the top of the range from collapsing once counts get large.
+  function itemRarity(id){
+    var freq=maxWear>0 ? 1-Math.min(wearCount[id]||0,maxWear)/maxWear : 1;
+    var rest=Math.min(daysSince(lastWorn[id]),90)/90;
+    return 0.65*freq+0.35*rest;
+  }
+  // Most recent logged day containing every core piece of this outfit.
+  function outfitDaysSince(o){
+    var c=core(o), best=9999;
+    logDays.forEach(function(day){
+      for(var i=0;i<c.length;i++) if(!day.ids[c[i]]) return;
+      var n=daysSince(day.date); if(n<best) best=n;
+    });
+    return best;
+  }
+  // An outfit is worth surfacing if it is under-worn on average AND contains at
+  // least one genuinely neglected piece — hence mean blended with max. PRIORITY
+  // then sharpens the spread: 1 = ignore wear counts, higher = push harder toward
+  // the neglected end of the closet.
+  function outfitWeight(o){
+    var c=core(o), sum=0, top=0;
+    c.forEach(function(id){var r=itemRarity(id); sum+=r; if(r>top) top=r;});
+    var base=0.6*(sum/c.length)+0.4*top;
+    var d=outfitDaysSince(o);
+    var pen = d>=21?1 : d>=14?0.65 : d>=7?0.35 : 0.12;   // damp what you just wore
+    return Math.max(Math.pow(base,PRIORITY)*pen,1e-6);
+  }
+  // Weighted shuffle (Efraimidis-Spirakis): the order is random but biased toward
+  // high weight, so Shuffle keeps handing back fresh-but-plausible picks.
+  function weightedOrder(list){
+    return list.map(function(o){return {o:o,k:Math.pow(Math.random(),1/outfitWeight(o))};})
+      .sort(function(a,b){return b.k-a.k;})
+      .map(function(x){return x.o;});
+  }
+
+  function currentCtx(){return ctx;}
+  function poolFor(c){
+    if(!c) return {list:outfits.slice(), all:true};
+    var m=outfits.filter(function(o){return o.ctxs.indexOf(c)>=0;});
+    return m.length?{list:m,all:false}:{list:outfits.slice(),all:true};
+  }
+
+  function sugButtons(on){
+    ["sugShuffle","sugUse","sugClear"].forEach(function(id){$(id).classList.toggle("hidden",!on);});
+    $("sugBtn").classList.toggle("hidden",on);
+  }
+
+  function suggest(reshuffle){
+    if(outfitsErr){ $("sugBody").className="why"; $("sugBody").innerHTML='<span class="bad">'+escapeHtml(outfitsErr)+'</span>'; return; }
+    if(!outfits.length){
+      $("sugBody").className="why";
+      $("sugBody").innerHTML="No approved outfits yet — add rows to <b>wardrobe-tracker/outfits.csv</b>, then reload.";
+      return;
+    }
+    var c=currentCtx(), pool=poolFor(c);
+    // Shuffle walks the existing queue, so you work through distinct fits rather
+    // than hitting the same one twice. A context change, or running off the end
+    // of the queue, reshuffles with freshly computed weights.
+    if(reshuffle && sugCtx===c && sugPos+1<sugQueue.length){
+      sugPos++;
+    }else{
+      var prev=sugCurrent;
+      sugQueue=weightedOrder(pool.list); sugPos=0; sugCtx=c;
+      // Avoid handing back the fit already on screen when the queue wraps.
+      if(prev && sugQueue.length>1 && sugQueue[0]===prev) sugPos=1;
+    }
+    sugCurrent=sugQueue[sugPos];
+    $("sugMeta").textContent=(sugPos+1)+" / "+sugQueue.length;
+    renderSuggestion(sugCurrent, (pool.all && c) ? c : "");
+    sugButtons(true);
+  }
+
+  function wearPhrase(n){return n===0?"never worn":n===1?"1 wear":n+" wears";}
+
+  function renderSuggestion(o,unmatchedCtx){
+    var pieces="", rare=[], missing=[], least=null;
+    o.items.forEach(function(id){
+      var owned=!!ownedIds[id];
+      var nm=nameById[id]?shortName({name:nameById[id]}):id;
+      var n=wearCount[id]||0;
+      var garment=owned && catById[id]!=="accessory";
+      if(garment && (!least || n<least.n)) least={nm:nm,n:n};
+      var isRare=garment && n<=LOW_USE;
+      if(isRare) rare.push(nm+" ("+wearPhrase(n)+")");
+      if(!owned) missing.push(id);
+      pieces+='<span class="piece'+(isRare?" rare":"")+(owned?"":" gone")+'">'+escapeHtml(nm)+
+              '<span class="n">'+(owned?(n===0?"never":n+"\u00d7"):"not owned")+'</span></span>';
+    });
+    var d=outfitDaysSince(o), why=[];
+    // Name the rare pieces when there are any; otherwise still say which piece
+    // gets the least use, so the pick is always explained rather than asserted.
+    if(rare.length) why.push("<b>Under-worn here:</b> "+escapeHtml(rare.join(", "))+".");
+    else if(least) why.push("<b>Least-used piece here:</b> "+escapeHtml(least.nm)+" ("+wearPhrase(least.n)+").");
+    why.push("<b>Worn as a full fit:</b> "+(d>=9999?"never":d===0?"today":d===1?"yesterday":d+" days ago")+".");
+    if(o.note) why.push(escapeHtml(o.note));
+    if(unmatchedCtx) why.push('<span class="bad">Nothing approved for "'+escapeHtml(unmatchedCtx)+'" — showing every context.</span>');
+    if(missing.length) why.push('<span class="bad">Not in the owned inventory: '+escapeHtml(missing.join(", "))+' — check outfits.csv.</span>');
+
+    var host=$("sugBody"); host.className=""; host.style.margin="0";
+    host.innerHTML='<div class="fit"><div class="ttl">'+escapeHtml(o.name)+
+      '<span class="fid">'+escapeHtml(o.id)+" \u00b7 "+escapeHtml(o.ctxs.join(", "))+'</span></div>'+
+      '<div class="pieces">'+pieces+'</div><div class="why">'+why.join("<br>")+'</div></div>';
+  }
+
+  function clearSuggestion(){
+    sugCurrent=null; sugQueue=[]; sugPos=-1; sugCtx=null;
+    $("sugMeta").textContent="";
+    var host=$("sugBody"); host.className="sub"; host.style.margin="0";
+    host.innerHTML=SUG_HINT;
+    sugButtons(false);
+  }
+
+  // The only path from a suggestion into the logger — and it stops at the picker.
+  function useSuggestion(){
+    if(!sugCurrent) return;
+    var applied=0, skipped=[];
+    selected.clear();
+    sugCurrent.items.forEach(function(id){
+      if(ownedIds[id]){ selected.add(id); applied++; } else skipped.push(id);
+    });
+    renderItems(); updateCount();
+    msg("Loaded "+sugCurrent.id+" ("+applied+" item"+(applied===1?"":"s")+") into the picker"+
+        (skipped.length?", skipped "+skipped.join(", "):"")+". Edit freely — nothing is logged until you commit.","ok");
+    $("itemsCard").scrollIntoView({behavior:"smooth",block:"start"});
+  }
+
   // ---- submit ----
   function submit(){
     var newLines=linesFor();
@@ -289,7 +506,7 @@
     var btn=$("logBtn"); btn.disabled=true;
     msg("Committing… ","");
     $("msg").innerHTML='<span class="spin"></span> Committing…';
-    var extraCtx=$("ctxInput").value.trim();
+    var chosenCtx=ctx;
 
     function attempt(tries){
       return ghGet(LOG_PATH).then(function(cur){
@@ -298,19 +515,20 @@
         if(base.slice(-1)!=="\n") base+="\n";
         var next=base+newLines.join("\n")+"\n";
         var date=$("date").value;
-        var m="log: "+date+" "+extraCtx+" ("+newLines.length+" item"+(newLines.length===1?"":"s")+")";
+        var m="log: "+date+" "+chosenCtx+" ("+newLines.length+" item"+(newLines.length===1?"":"s")+")";
         return ghPut(LOG_PATH,next,cur.sha,m).then(function(res){
           if(res==="conflict"){
             if(tries<=0) throw new Error("conflict (retry failed)");
             return attempt(tries-1);
           }
+          computeWearStats(next);
           renderRecent(next);
         });
       });
     }
 
     attempt(2).then(function(){
-      msg("Logged "+newLines.length+" item(s) for "+$("date").value+" · "+extraCtx+".","ok");
+      msg("Logged "+newLines.length+" item(s) for "+$("date").value+" · "+chosenCtx+".","ok");
       selected.clear(); renderItems(); updateCount();
     }).catch(function(e){
       msg("Failed: "+e.message,"err"); btn.disabled=false;
@@ -334,11 +552,16 @@
       if(!items.length){msg("No owned items found in inventory.csv.","err"); return;}
       renderItems();
       return ghGet(LOG_PATH).then(function(log){
-        // seed context presets from history
-        var used=[]; log.text.split(/\r?\n/).forEach(function(l){var p=l.split("|"); if(p[2]&&used.indexOf(p[2])<0&&p[2]!=="context") used.push(p[2]);});
-        renderCtxPresets(used);
+        renderContexts();
+        computeWearStats(log.text);
         renderRecent(log.text);
         updateCount();
+        // Suggestions are garnish: a failure here must never break logging.
+        return ghGet(OUTFITS_PATH).then(function(f){
+          outfits=parseOutfits(f.text); outfitsErr="";
+        }).catch(function(e){
+          outfits=[]; outfitsErr="Couldn't load outfits.csv ("+e.message+"). Logging still works.";
+        }).then(function(){ clearSuggestion(); });
       });
     }).catch(function(e){
       msg("Couldn't load from GitHub: "+e.message+" — check the token.","err");
@@ -348,9 +571,12 @@
 
   // wire up
   (function(){var d=new Date();var p=function(n){return(n<10?"0":"")+n;};$("date").value=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());})();
-  $("ctxInput").addEventListener("input",function(){ctx=this.value.trim(); syncCtxSel(); updateCount();});
   $("logBtn").addEventListener("click",submit);
   $("copyBtn").addEventListener("click",copyLines);
+  $("sugBtn").addEventListener("click",function(){suggest(false);});
+  $("sugShuffle").addEventListener("click",function(){suggest(true);});
+  $("sugUse").addEventListener("click",useSuggestion);
+  $("sugClear").addEventListener("click",clearSuggestion);
   $("saveToken").addEventListener("click",function(){
     var t=$("token").value.trim();
     if(!t){msg("Paste a token first.","err"); return;}
