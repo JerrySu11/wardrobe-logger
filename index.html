@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Wear Log</title>
+<title>Wardrobe Log</title>
 <style>
   :root{
     --bg:#f6f6f7; --card:#fff; --ink:#16181d; --muted:#6b7280;
@@ -92,13 +92,31 @@
   .why b{color:var(--ink); font-weight:600}
   .why .bad{color:var(--err)}
   .hidden{display:none !important}
+  /* Wear / Wash mode switch */
+  .seg{display:flex; border:1px solid var(--chip-line); border-radius:12px; overflow:hidden; margin-bottom:14px; background:var(--chip)}
+  .seg div{flex:1; text-align:center; padding:10px; font-size:14px; font-weight:600; cursor:pointer; color:var(--muted); user-select:none}
+  .seg div.sel{background:var(--sel); color:var(--sel-ink)}
+  /* Wash status rows */
+  .wrow{display:flex; align-items:center; gap:12px; padding:10px 0; border-top:1px solid var(--line); cursor:pointer; user-select:none}
+  .wrow:first-child{border-top:none}
+  .wrow .box{width:22px; height:22px; border-radius:7px; border:1.5px solid var(--chip-line); background:var(--chip); flex:none}
+  .wrow.sel .box{background:var(--sel); border-color:var(--sel)}
+  .wrow.sel .box::after{content:"\2713"; color:var(--sel-ink); display:block; text-align:center; font-size:14px; line-height:19px}
+  .wrow .nm{flex:1; font-size:15px; line-height:1.2; min-width:0}
+  .wrow .nm .id{font-size:11px; color:var(--muted); margin-left:5px}
+  .wrow .st{font-size:12px; color:var(--muted); margin-top:3px}
+  .wrow .st b{color:var(--ink); font-weight:600}
+  .wrow .num{font-size:22px; font-weight:600; min-width:44px; text-align:right; letter-spacing:-.02em; line-height:1}
+  .wrow .num small{display:block; font-size:10px; font-weight:400; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-top:2px}
+  .wrow .num.none{color:var(--muted); font-weight:400}
   .spin{display:inline-block; width:14px; height:14px; border:2px solid var(--muted); border-top-color:transparent; border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px}
   @keyframes sp{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
-  <h1>Wear Log</h1>
-  <div class="sub">Tap what you wore &rarr; pick a context &rarr; log it. Commits straight to <code style="font-size:12px">wear-log.csv</code>.</div>
+  <h1>Wardrobe Log</h1>
+  <div class="sub" id="subWear">Tap what you wore &rarr; pick a context &rarr; log it. Commits straight to <code style="font-size:12px">wear-log.csv</code>.</div>
+  <div class="sub hidden" id="subWash">Tick the outerwear, pants, towel or bedding you washed &rarr; commit. Appends to <code style="font-size:12px">wash-log.csv</code>; wears since each wash are counted from <code style="font-size:12px">wear-log.csv</code>.</div>
 
   <!-- Setup / token -->
   <div class="card" id="setupCard">
@@ -120,6 +138,12 @@
   </div>
 
   <div id="app" class="hidden">
+    <div class="seg" id="modeSeg">
+      <div class="sel" data-mode="wear">Wear</div>
+      <div data-mode="wash">Wash</div>
+    </div>
+
+  <div id="wearView">
     <!-- Date + context -->
     <div class="card">
       <div style="margin-bottom:12px">
@@ -152,13 +176,51 @@
       <label>Recent</label>
       <div class="recent" id="recent">&mdash;</div>
     </div>
+  </div><!-- /wearView -->
+
+  <div id="washView" class="hidden">
+    <!-- Wash date + method -->
+    <div class="card">
+      <div style="margin-bottom:12px">
+        <label for="washDate">Wash date</label>
+        <input type="date" id="washDate">
+      </div>
+      <label>Method</label>
+      <div class="ctxwrap" id="washMethods" style="margin-bottom:0"></div>
+    </div>
+
+    <!-- Since last wash -->
+    <div class="card">
+      <div class="cat" style="margin-top:0"><span>Since last wash</span><span id="washMeta"></span></div>
+      <div class="sub" style="margin:0 0 6px">Outerwear and pants, most wears since wash first. Tap the pieces you washed. A wash logged on a day also covers that day&rsquo;s wear.</div>
+      <div id="washRows"><div class="sub" style="margin:8px 0 0">Loading&hellip;</div></div>
+    </div>
+
+    <!-- Household textiles: days since wash only -->
+    <div class="card">
+      <div class="cat" style="margin-top:0"><span>Household</span><span id="hhMeta"></span></div>
+      <div class="sub" style="margin:0 0 6px">Towel and bedding. Not wardrobe pieces, so no wear count &mdash; just days since the last logged wash.</div>
+      <div id="hhRows"></div>
+    </div>
+
+    <!-- Recent washes -->
+    <div class="card">
+      <label>Recent washes</label>
+      <div class="recent" id="washRecent">&mdash;</div>
+    </div>
+  </div><!-- /washView -->
 
     <div class="msg" id="msg"></div>
 
-    <div class="bar">
+    <div class="bar" id="wearBar">
       <span class="count" id="count">0 items</span>
       <button class="ghost" id="copyBtn" title="Copy the lines instead of committing">Copy</button>
       <button class="primary" id="logBtn" disabled>Log &amp; commit</button>
+    </div>
+    <div class="bar hidden" id="washBar">
+      <span class="count" id="washCount">0 items</span>
+      <button class="ghost" id="washCopyBtn" title="Copy the lines instead of committing" disabled>Copy</button>
+      <button class="primary" id="washBtn" disabled>Log wash &amp; commit</button>
     </div>
   </div>
 
@@ -169,6 +231,7 @@
   var INV_PATH="wardrobe-tracker/inventory.csv";
   var LOG_PATH="wardrobe-tracker/wear-log.csv";
   var OUTFITS_PATH="wardrobe-tracker/outfits.csv";
+  var WASH_PATH="wardrobe-tracker/wash-log.csv";
   var API="https://api.github.com/repos/"+OWNER+"/"+REPO+"/contents/";
   var TK="wardrobe_gh_token";
   var CAT_ORDER=["outerwear","top","pants","footwear","accessory"];
@@ -177,6 +240,14 @@
   // in wear-log.csv stay consistent with the ones outfits.csv is tagged with.
   // Adding a fourth context means adding it here and in outfits.html.
   var CONTEXTS=["casual","elevated-casual","dressed-up"];
+  // Wash tracking covers the categories that are worn several times between washes.
+  // Tops/footwear/accessories are deliberately excluded so the list stays short.
+  var WASH_CATS=["outerwear","pants"];
+  var WASH_METHODS=["wash","dry-clean"];
+  // Household textiles tracked by days-since-wash only. They are not wardrobe pieces,
+  // so they live here rather than in inventory.csv, and never appear in wear-log.csv.
+  // The HH- prefix keeps their IDs clear of the OUT-/TOP-/PNT-/FTW-/ACC- scheme.
+  var HOUSEHOLD=[{id:"HH-01",name:"Towel"},{id:"HH-02",name:"Bedding"}];
 
   var $=function(id){return document.getElementById(id);};
   var items=[], nameById={}, catById={}, ownedIds={}, selected=new Set(), ctx="";
@@ -186,6 +257,8 @@
   var PRIORITY=3;   // how hard suggestions lean toward under-worn pieces (1 = not at all)
   var LOW_USE=2;    // a garment at or below this many wears is called out as under-worn
   var sugQueue=[], sugPos=-1, sugCtx=null, sugCurrent=null;
+  // Wash state. lastWash[id] = most recent wash date; washEvents = raw rows for "Recent".
+  var mode="wear", washMethod="wash", washSelected=new Set(), lastWash={}, washEvents=[], washErr="";
   var SUG_HINT='Pick a context, then tap <b>Suggest</b> for an approved outfit from '+
     '<code style="font-size:12px">outfits.csv</code>, weighted toward pieces you rarely wear. '+
     'Advisory only — nothing is logged until you tap Log &amp; commit.';
@@ -523,6 +596,7 @@
           }
           computeWearStats(next);
           renderRecent(next);
+          renderWash();
         });
       });
     }
@@ -540,6 +614,192 @@
     if(!text) return;
     navigator.clipboard.writeText(text).then(function(){msg("Copied "+linesFor().length+" line(s) to clipboard.","ok");},
       function(){msg("Copy failed — select manually: "+text,"err");});
+  }
+
+  // ---- wash log ----
+  // wash-log.csv: date|item_id|method   (append-only, like wear-log.csv)
+  function computeWashStats(text){
+    lastWash={}; washEvents=[];
+    text.split(/\r?\n/).forEach(function(l){
+      var p=l.split("|");
+      if(p.length<2) return;
+      var d=p[0].trim(), id=p[1].trim(), m=(p[2]||"").trim();
+      if(!id || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+      if(!lastWash[id] || d>lastWash[id]) lastWash[id]=d;
+      washEvents.push({date:d,id:id,method:m});
+    });
+  }
+  // Distinct logged days the piece was worn strictly after its last wash. A wash
+  // dated D therefore covers a wear on D (you wear it, then it goes in the machine).
+  // With no wash on record, every logged wear counts.
+  function wearsSinceWash(id){
+    var since=lastWash[id]||"", n=0;
+    logDays.forEach(function(day){ if(day.ids[id] && day.date>since) n++; });
+    return n;
+  }
+  function washItems(){
+    return items.filter(function(i){return WASH_CATS.indexOf(i.cat)>=0;});
+  }
+  function washName(id){
+    if(nameById[id]) return shortName({name:nameById[id]});
+    for(var i=0;i<HOUSEHOLD.length;i++) if(HOUSEHOLD[i].id===id) return HOUSEHOLD[i].name;
+    return id;
+  }
+  function toggleWash(id,row){
+    if(washSelected.has(id)) washSelected.delete(id); else washSelected.add(id);
+    row.classList.toggle("sel"); updateWashCount();
+  }
+
+  function renderHousehold(){
+    var host=$("hhRows"); if(!host) return;
+    host.innerHTML="";
+    if(washErr){ $("hhMeta").textContent=""; return; }
+    var stale=0;
+    HOUSEHOLD.forEach(function(h){
+      var last=lastWash[h.id]||"", d=last?daysSince(last):-1;
+      var r=document.createElement("div"); r.className="wrow"+(washSelected.has(h.id)?" sel":"");
+      var st=last?"Last wash <b>"+escapeHtml(last)+"</b>":"No wash logged yet";
+      var num=last?'<div class="num">'+d+'<small>day'+(d===1?"":"s")+'</small></div>'
+                  :'<div class="num none">\u2014<small>days</small></div>';
+      r.innerHTML='<div class="box"></div>'+
+        '<div class="nm">'+escapeHtml(h.name)+'<span class="id">'+h.id+'</span><div class="st">'+st+'</div></div>'+num;
+      r.onclick=function(){toggleWash(h.id,r);};
+      host.appendChild(r);
+      if(last) stale++;
+    });
+    $("hhMeta").textContent=stale+" / "+HOUSEHOLD.length+" with a wash on record";
+  }
+  function agoPhrase(n){return n===0?"today":n===1?"yesterday":n+" days ago";}
+
+  function renderWash(){
+    var host=$("washRows"); if(!host) return;
+    host.innerHTML="";
+    if(washErr){ host.innerHTML='<div class="why"><span class="bad">'+escapeHtml(washErr)+'</span></div>'; return; }
+    var list=washItems().map(function(it){
+      return {it:it, n:wearsSinceWash(it.id), last:lastWash[it.id]||"", days:lastWash[it.id]?daysSince(lastWash[it.id]):-1};
+    });
+    if(!list.length){ host.textContent="No owned outerwear or pants in inventory.csv."; return; }
+    // Most wears since wash first; ties broken by how long ago the wash was
+    // (never-washed sorts as oldest), then by ID for a stable order.
+    list.sort(function(a,b){
+      if(b.n!==a.n) return b.n-a.n;
+      var da=a.days<0?1e9:a.days, db=b.days<0?1e9:b.days;
+      if(db!==da) return db-da;
+      return a.it.id<b.it.id?-1:1;
+    });
+    var washed=0;
+    list.forEach(function(x){
+      var it=x.it;
+      var r=document.createElement("div"); r.className="wrow"+(washSelected.has(it.id)?" sel":"");
+      var st;
+      if(x.last){
+        washed++;
+        st="Last wash <b>"+escapeHtml(x.last)+"</b> \u00b7 "+agoPhrase(x.days)+
+           (lastWorn[it.id]&&lastWorn[it.id]>x.last?" \u00b7 worn "+agoPhrase(daysSince(lastWorn[it.id])):"");
+      }else{
+        st="No wash logged \u00b7 counting every logged wear"+
+           (lastWorn[it.id]?" \u00b7 worn "+agoPhrase(daysSince(lastWorn[it.id])):"");
+      }
+      r.innerHTML='<div class="box"></div>'+
+        '<div class="nm">'+escapeHtml(shortName(it))+'<span class="id">'+it.id+'</span><div class="st">'+st+'</div></div>'+
+        '<div class="num'+(x.n===0?" none":"")+'">'+x.n+'<small>wear'+(x.n===1?"":"s")+'</small></div>';
+      r.onclick=function(){toggleWash(it.id,r);};
+      host.appendChild(r);
+    });
+    $("washMeta").textContent=washed+" / "+list.length+" with a wash on record";
+  }
+
+  function renderWashMethods(){
+    var host=$("washMethods"); host.innerHTML="";
+    WASH_METHODS.forEach(function(m){
+      var el=document.createElement("div"); el.className="ctx"+(m===washMethod?" sel":"");
+      el.textContent=m;
+      el.onclick=function(){ washMethod=m; renderWashMethods(); };
+      host.appendChild(el);
+    });
+  }
+
+  function renderWashRecent(){
+    var host=$("washRecent"); host.innerHTML="";
+    if(!washEvents.length){ host.textContent="No washes logged yet."; return; }
+    var map={}, order=[];
+    washEvents.forEach(function(e){
+      var key=e.date+"|"+e.method;
+      if(!map[key]){ map[key]=[]; order.push(key); }
+      map[key].push(e.id);
+    });
+    // Newest first by date (not file order), so a back-dated entry lands where it belongs.
+    order.sort(function(a,b){return a<b?1:a>b?-1:0;});
+    order.slice(0,6).forEach(function(key){
+      var parts=key.split("|"), date=parts[0], m=parts[1];
+      var names=map[key].map(washName);
+      var r=document.createElement("div"); r.className="r";
+      r.innerHTML="<b>"+escapeHtml(date)+"</b> &middot; "+escapeHtml(m||"wash")+"<br>"+escapeHtml(names.join(", "));
+      host.appendChild(r);
+    });
+  }
+
+  function updateWashCount(){
+    var n=washSelected.size;
+    $("washCount").textContent=n+" item"+(n===1?"":"s");
+    $("washBtn").disabled=!(n>0 && !!$("washDate").value);
+    $("washCopyBtn").disabled=n===0;
+  }
+  function washLinesFor(){
+    var date=$("washDate").value, m=washMethod;
+    var ids=[];
+    items.forEach(function(i){if(washSelected.has(i.id)) ids.push(i.id);});
+    HOUSEHOLD.forEach(function(h){if(washSelected.has(h.id)) ids.push(h.id);});
+    return ids.map(function(id){return date+"|"+id+"|"+m;});
+  }
+
+  function submitWash(){
+    var newLines=washLinesFor();
+    if(!newLines.length) return;
+    var btn=$("washBtn"); btn.disabled=true;
+    $("msg").className="msg"; $("msg").innerHTML='<span class="spin"></span> Committing\u2026';
+    var date=$("washDate").value, m=washMethod;
+
+    function attempt(tries){
+      return ghGet(WASH_PATH).then(function(cur){
+        var base=cur.text;
+        if(!base) base="date|item_id|method\n";
+        if(base.slice(-1)!=="\n") base+="\n";
+        var next=base+newLines.join("\n")+"\n";
+        var cm="wash: "+date+" "+m+" ("+newLines.length+" item"+(newLines.length===1?"":"s")+")";
+        return ghPut(WASH_PATH,next,cur.sha,cm).then(function(res){
+          if(res==="conflict"){
+            if(tries<=0) throw new Error("conflict (retry failed)");
+            return attempt(tries-1);
+          }
+          computeWashStats(next); washErr="";
+        });
+      });
+    }
+
+    attempt(2).then(function(){
+      msg("Logged "+m+" of "+newLines.length+" item(s) on "+date+".","ok");
+      washSelected.clear(); renderWash(); renderHousehold(); renderWashRecent(); updateWashCount();
+    }).catch(function(e){
+      msg("Failed: "+e.message,"err"); btn.disabled=false;
+    });
+  }
+  function copyWashLines(){
+    var lines=washLinesFor(), text=lines.join("\n");
+    if(!text) return;
+    navigator.clipboard.writeText(text).then(function(){msg("Copied "+lines.length+" line(s) to clipboard.","ok");},
+      function(){msg("Copy failed \u2014 select manually: "+text,"err");});
+  }
+
+  function setMode(m){
+    mode=m;
+    var wash=(m==="wash");
+    $("wearView").classList.toggle("hidden",wash);  $("washView").classList.toggle("hidden",!wash);
+    $("wearBar").classList.toggle("hidden",wash);   $("washBar").classList.toggle("hidden",!wash);
+    $("subWear").classList.toggle("hidden",wash);   $("subWash").classList.toggle("hidden",!wash);
+    var segs=$("modeSeg").children;
+    for(var i=0;i<segs.length;i++) segs[i].classList.toggle("sel",segs[i].getAttribute("data-mode")===m);
+    msg("");
   }
 
   // ---- boot ----
@@ -561,7 +821,13 @@
           outfits=parseOutfits(f.text); outfitsErr="";
         }).catch(function(e){
           outfits=[]; outfitsErr="Couldn't load outfits.csv ("+e.message+"). Logging still works.";
-        }).then(function(){ clearSuggestion(); });
+        }).then(function(){ clearSuggestion(); })
+        // Wash tracking is likewise optional: a missing wash-log.csv (404) reads as
+        // empty and is created on the first wash commit.
+        .then(function(){ return ghGet(WASH_PATH); })
+        .then(function(w){ computeWashStats(w.text); washErr=""; })
+        .catch(function(e){ washErr="Couldn't load wash-log.csv ("+e.message+"). Wear logging still works."; })
+        .then(function(){ renderWashMethods(); renderWash(); renderHousehold(); renderWashRecent(); updateWashCount(); });
       });
     }).catch(function(e){
       msg("Couldn't load from GitHub: "+e.message+" — check the token.","err");
@@ -570,13 +836,19 @@
   }
 
   // wire up
-  (function(){var d=new Date();var p=function(n){return(n<10?"0":"")+n;};$("date").value=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());})();
+  (function(){var d=new Date();var p=function(n){return(n<10?"0":"")+n;};var today=d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate());$("date").value=today;$("washDate").value=today;})();
   $("logBtn").addEventListener("click",submit);
   $("copyBtn").addEventListener("click",copyLines);
   $("sugBtn").addEventListener("click",function(){suggest(false);});
   $("sugShuffle").addEventListener("click",function(){suggest(true);});
   $("sugUse").addEventListener("click",useSuggestion);
   $("sugClear").addEventListener("click",clearSuggestion);
+  $("washBtn").addEventListener("click",submitWash);
+  $("washCopyBtn").addEventListener("click",copyWashLines);
+  $("washDate").addEventListener("change",updateWashCount);
+  Array.prototype.forEach.call($("modeSeg").children,function(el){
+    el.addEventListener("click",function(){setMode(el.getAttribute("data-mode"));});
+  });
   $("saveToken").addEventListener("click",function(){
     var t=$("token").value.trim();
     if(!t){msg("Paste a token first.","err"); return;}
